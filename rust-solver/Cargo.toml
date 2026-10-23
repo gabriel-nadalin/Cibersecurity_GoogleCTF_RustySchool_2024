@@ -1,0 +1,11 @@
+[package]
+name = "solve"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+itertools = "0.15.0"
+md5 = "0.8.1"
+num-bigint = "0.5.1"
+rand = "0.8.5"
+sha1 = "0.11.0"

@@ -1,0 +1,28 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# SageMath intermediate files
+*.sage.py
+.sage/
+
+# Local challenge environment & generated outputs
+/flag-sage.txt
+/flag-rust.txt
+my_urandom
+*.dec.txt
+flag.txt.encrypted.dec.txt
+flag.txt.encrypted.fast.dec.txt
+
+# OS and IDE artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Rust build artifacts
+/rust-solver/target/
+*.decrypted

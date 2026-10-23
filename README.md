@@ -1,103 +1,114 @@
-# Google CTF 2024 + Rusty School (Reversing / Crypto)
+# Google CTF 2024 — Rusty School
 
-> **WriteUp & Solução Oficial** do desafio **Rusty School** do Google CTF 2024.
-> **Pontuação:** 406 pts | **Solves:** 6 | **Autores:** Google CTF / perfect blue
+Write-up e solução do desafio **Rusty School** (Reversing / Crypto, 406 pontos,
+6 solves) do Google CTF 2024.
 
----
+O repositório contém o binário, o ciphertext, dois solvers independentes
+(SageMath e Rust) e a documentação do desafio.
 
-## Visão Geral do Desafio
-
-O desafio consiste na análise de um executável ELF x86-64 compilado em **Rust** (`rustyschool`) que implementa uma cifra de bloco proprietária baseada em uma **Rede Feistel de 4 ramos** com 12 rodadas e evolução de chaves sobre o corpo finito $\text{GF}(2^{16})$.
-
-Para recuperar a mensagem original em texto plano a partir do arquivo cifrado (`flag.txt.encrypted`), a solução exige:
-1. **Engenharia Reversa no Binário Rust**: Mapeamento das estruturas internas, chamadas de dispersão (`MD5`, `SHA-1`) e redução modular com o primo de 96 bits $P = 79160129948973046149879599747$.
-2. **Criptoanálise Algébrica em $\text{GF}(2^{16})$**: Formulação e resolução do sistema não linear de 6 equações quadráticas sobre o polinômio redutor irredutível $x^{16} + x^5 + x^3 + x + 1$ (`0x2B`).
-3. **Solver em SageMath 10+**: Atualização da API do SageMath (`from_integer` / `to_integer`) e busca recursiva em profundidade (*backtracking*) multiprocessada para decifrar os 133 blocos de 60 bytes.
-
----
-
-## Estrutura do Repositório (Arquivos Principais)
+## Estrutura
 
 ```text
 .
-├── attachments/                 # Arquivos fornecidos no desafio
-│   ├── flag.txt.encrypted       # Arquivo cifrado de 7.980 bytes (133 blocos)
-│   └── rustyschool              # Binário ELF x86-64 compilado em Rust
-├── challenge/
-│   └── src/                     # Código-fonte original do desafio em Rust
-├── solution/
-│   ├── flag.txt                 # Flag oficial recuperada (Arte ASCII)
-│   └── solve.sage               # Script de solução original em SageMath
-├── metadata.yaml                # Manifesto do desafio (padrão ctf-cli)
-├── solve.py                     # Módulo de inversão algébrica (SageMath 10+)
-├── solve_fast.py                # Orquestrador multiprocessado paralelizável
-└── README.md                    # Documentação do repositório
+├── attachments/
+│   ├── rustyschool              # binário ELF x86-64 (Rust 1.70.0)
+│   └── flag.txt.encrypted       # 7.980 bytes = 133 blocos de 60 bytes
+├── sage-solver/
+│   ├── solve.py                 # solver SageMath
+│   └── README.md
+├── rust-solver/
+│   ├── Cargo.toml
+│   ├── Cargo.lock
+│   ├── src/                     # inclui encrypt.rs (cifrador reconstruído via Ghidra)
+│   └── README.md                # solver Rust + detalhes da implementação
+├── docs/
+│   ├── SETUP.md                 # instalação do SageMath 10.x e Rust
+│   └── presentation.pdf
+├── WRITEUP.md                   # write-up completo
+├── flag-sage.txt                # gerado pelo solver SageMath
+├── flag-rust.txt                # gerado pelo solver Rust
+├── LICENSE
+└── README.md
 ```
----
-Obs.: Os Arquivos restantes foram mantidos para registro de desenvolvimento.
 
-## Requisitos e Pré-requisitos
+## Solvers
 
-* **Sistema Operacional**: Linux (Ubuntu 22.04 LTS / WSL2)
-* **Python**: 3.10 ou superior
-* **SageMath**: Versão 10.0+ (instalação via Conda recomendada)
+| Solver | Entrada | Saída | Tempo aproximado |
+|---|---|---|---|
+| SageMath | `attachments/flag.txt.encrypted` | `flag-sage.txt` | minutos |
+| Rust | `attachments/flag.txt.encrypted` | `flag-rust.txt` | ~1–2 s |
 
-### Configuração do Ambiente Conda
+Ambos produzem 6.359 bytes com md5
+`468a48469137692c853e3c665dc49a23`. Para conferir:
 
 ```bash
-# Ativar o ambiente Conda contendo o SageMath
-conda activate sage
+cmp flag-sage.txt flag-rust.txt
 ```
 
----
+### SageMath
 
-## Como Executar o Solver (*Quick Start*)
+Requer SageMath **10.x** (`from_integer()`/`to_integer()`); versões 9.x não
+funcionam. Ative o ambiente SageMath da sua instalação e rode a partir da raiz
+do repositório:
 
-1. **Clone o repositório e navegue até a pasta**:
-   ```bash
-   git clone https://github.com/seu-usuario/google-ctf-2024-rustyschool.git
-   cd google-ctf-2024-rustyschool
-   ```
-
-2. **Execute o solver multiprocessado**:
-   ```bash
-   PYTHONPATH=. python3 solve_fast.py attachments/flag.txt.encrypted
-   ```
-
-3. **Verifique o resultado**:
-   O script executará primeiro a **Fase 0 (Prova de Conceito do Bloco #0)** e em seguida processará os 133 blocos em paralelo. O resultado final será salvo em `solution/flag.txt`.
-
-   ```bash
-   cat solution/flag.txt
-   ```
-
----
-
-## Detalhes da Solução Algébrica
-
-### 1. Inversão da Derivação de Chaves (`derive`)
-A função de chave deriva o estado inicial em $\text{GF}(2^{16})$ resolvendo o Ideal polinomial de 6 equações quadráticas:
-$$a_i \cdot a_{i+1} + a_{i+4} = c_i \pmod{x^{16} + x^5 + x^3 + x + 1}$$
-
-### 2. Inversão dos Ramos Feistel por Rodada
-Para cada uma das 12 rodadas Feistel (de trás para frente):
-1. $b_1 = \text{cb}_2 \oplus \text{SHA1}(rv_1 \parallel b_2)[:12]$
-2. $b_0 = \text{cb}_1 \oplus \text{MD5}(rv_0 \parallel b_2)[:12]$
-3. $b_3 = \left[ \left( (\text{bs} - b_2^{b_1} \pmod P) \cdot b_0^{-1} \pmod P - b_1 \right) \pmod P \right] \text{.to\_bytes}(12, \text{'little'})$
-
----
-
-## Flag Decifrada
-
-A flag é um banner visual completo em **Arte ASCII** com a marca oficial do **Google CTF 2024**:
-```text
- .d8888b. 88888888888 8888888888 .d888 8888888 
-d88P  Y88b    888     888       d88P"    888   
-888    888    888     888      d88P      888   
-888           888     8888888 d88P       888   
-888  88888    888     888    d88P        888   
-888    888    888     888   d88P         888   
-Y88b  d88P    888     888  d88P          888   
- "Y8888P8"    888     888 d88P       888888888 
+```bash
+python sage-solver/solve.py attachments/flag.txt.encrypted
 ```
 
+Confira a versão com `sage --version`.
+
+Opções:
+
+```bash
+python sage-solver/solve.py <input> -o <output> -j <workers>
+```
+
+O solver falha com código de saída diferente de zero se qualquer bloco não
+decifrar.
+
+### Rust
+
+```bash
+cargo run --release --manifest-path rust-solver/Cargo.toml -- \
+  --decrypt attachments/flag.txt.encrypted
+# -> flag-rust.txt
+```
+
+Use `-o/--output` para escolher outro caminho:
+
+```bash
+cargo run --release --manifest-path rust-solver/Cargo.toml -- \
+  --decrypt attachments/flag.txt.encrypted -o /tmp/flag.txt
+```
+
+## Documentação
+
+* [`WRITEUP.md`](WRITEUP.md) — análise completa da cifra e da solução.
+* [`docs/SETUP.md`](docs/SETUP.md) — instalação do SageMath 10.x e Rust.
+* [`docs/presentation.pdf`](docs/presentation.pdf) — apresentação da versão
+  inicial; alguns caminhos de arquivo citados nela podem estar desatualizados.
+* [`sage-solver/README.md`](sage-solver/README.md) e
+  [`rust-solver/README.md`](rust-solver/README.md) — detalhes de cada solver.
+
+## Como a cifra funciona
+
+* Rede Feistel de **4 ramos**, 12 rodadas, ramos de 12 bytes.
+* Entrada em blocos de **48 bytes**; saída de **60 bytes** = 48 bytes de estado
+  + 12 bytes de estado de chave por bloco.
+* Rodada: MD5 e SHA-1 truncados em 12 bytes, XOR, e aritmética modular módulo
+  o primo de 96 bits:
+
+  ```text
+  P = 79160129948973046149879599747
+  ```
+
+* Escalonamento de chaves (`derive`) sobre **GF(2¹⁶)**, polinômio redutor
+  `x¹⁶ + x⁵ + x³ + x + 1` (`0x2B`).
+* A inversão resolve sistemas quadráticos de 6 equações em GF(2¹⁶), retrocede
+  as 12 rodadas e trata as raízes múltiplas.
+* O bloco final tem 23 bytes úteis e padding `0x01`; os dois solvers truncam
+  no primeiro `0x01`, produzindo os 6.359 bytes exatos.
+
+## Observação
+
+O histórico completo da limpeza e das versões antigas permanece no Git.
